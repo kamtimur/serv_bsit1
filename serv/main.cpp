@@ -9,11 +9,14 @@ using namespace std;
 #pragma comment(lib, "mswsock.lib")
 #define MAX_CLIENTS (100)
 #define WIN32_LEAN_AND_MEAN
+#define BUFSIZE 2048
 struct client_ctx
 {
 	int socket;
-	CHAR buf_recv[512]; // Буфер приема
-	CHAR buf_send[512]; // Буфер отправки
+	CHAR buf_recv[BUFSIZE]; // Буфер приема
+	CHAR buf_send[BUFSIZE]; // Буфер отправки
+	unsigned int current_read=0;
+	unsigned int current_write=0;
 	unsigned int sz_recv; // Принято данных
 	unsigned int sz_send_total; // Данных в буфере отправки
 	unsigned int sz_send; // Данных отправлено
@@ -34,9 +37,15 @@ OVERLAPPED* lp_overlap;
 // Функция стартует операцию чтения из сокета
 void schedule_read(DWORD idx)
 {
+	g_ctxs[idx].current_write = (g_ctxs[idx].current_write) % BUFSIZE;
 	WSABUF buf;
-	buf.buf = g_ctxs[idx].buf_recv + g_ctxs[idx].sz_recv;
-	buf.len = sizeof(g_ctxs[idx].buf_recv) - g_ctxs[idx].sz_recv;
+	buf.buf = g_ctxs[idx].buf_recv +g_ctxs[idx].current_write;
+	if (g_ctxs[idx].sz_recv == 0)
+	{
+		g_ctxs[idx].sz_recv = BUFSIZE;
+	}
+	buf.len = g_ctxs[idx].sz_recv;
+	/*buf.len = BUFSIZE;*/
 
 	memset(&g_ctxs[idx].overlap_recv, 0, sizeof(OVERLAPPED));
 	g_ctxs[idx].flags_recv = 0;
@@ -193,28 +202,30 @@ int io_serv()
 						//PostQueuedCompletionStatus(g_io_port, 0, key, &g_ctxs[key].overlap_cancel);
 						//continue;
 					}
-					g_ctxs[key].sz_recv += transferred;
-					if (is_string_received(key, &len))
-					{
-						cout << g_ctxs[key].buf_recv << endl;
-						//sprintf_s(g_ctxs[key].buf_send, "Test\0");
-						//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-						//g_ctxs[key].sz_send = 0;
-						//schedule_write(key);
-						// Если строка полностью пришла, то сформировать ответ и начать его отправлять
-						//sprintf_s(g_ctxs[key].buf_send, "You string length: %d\0", len);
-						//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-						//g_ctxs[key].sz_send = 0; schedule_write(key);
+					g_ctxs[key].sz_recv = transferred;
+					g_ctxs[key].current_write += transferred;
+					//if (is_string_received(key, &len))
+					//{
+					//	/*cout << g_ctxs[key].sz_recv << endl;*/
+					//	//sprintf_s(g_ctxs[key].buf_send, "Test\0");
+					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
+					//	//g_ctxs[key].sz_send = 0;
+					//	//schedule_write(key);
+					//	// Если строка полностью пришла, то сформировать ответ и начать его отправлять
+					//	//sprintf_s(g_ctxs[key].buf_send, "You string length: %d\0", len);
+					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
+					//	//g_ctxs[key].sz_send = 0; schedule_write(key);
 
-						//sprintf_s(g_ctxs[key].buf_send, "You string length: 45454\0", len);
-						//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-						//g_ctxs[key].sz_send = 0; schedule_write(key);
-					}
-					else
+					//	//sprintf_s(g_ctxs[key].buf_send, "You string length: 45454\0", len);
+					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
+					//	//g_ctxs[key].sz_send = 0; schedule_write(key);
+					//}
+					/*else*/
 					{
 						// Иначе - ждем данные дальше
 						/*cout << "reading" << endl;*/
 						schedule_read(key);
+						cout << g_ctxs[key].sz_recv << endl;
 						cout << g_ctxs[key].buf_recv << endl;
 
 					}
