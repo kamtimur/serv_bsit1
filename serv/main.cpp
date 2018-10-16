@@ -10,6 +10,14 @@ using namespace std;
 #define MAX_CLIENTS (100)
 #define WIN32_LEAN_AND_MEAN
 #define BUFSIZE 2048
+HCRYPTPROV ServerRSAProv;
+HCRYPTKEY ServerRSAKeys;
+enum CMD
+{
+	CMD_PUBKEY = 1,
+	CMD_SESSIONKEY,
+	CMD_VERIFY
+};
 struct client_ctx
 {
 	int socket;
@@ -25,6 +33,15 @@ struct client_ctx
 	OVERLAPPED overlap_send;
 	OVERLAPPED overlap_cancel;
 	DWORD flags_recv; // Флаги для WSARecv
+
+	HCRYPTKEY ClientRSAKeys;
+	HCRYPTKEY hSessionKey_AESClient;
+	BYTE *ClientPublicKeyBlob = NULL;
+	DWORD ClientPublicKeyBlobLength=0;
+	BYTE *ClientSessionKeyBlob = NULL;
+	DWORD ClientSessionKeyBlobLength = 0;
+
+
 };
 // Прослушивающий сокет и все сокеты подключения хранятся
 // в массиве структур (вместе с overlapped и буферами)
@@ -37,31 +54,23 @@ OVERLAPPED* lp_overlap;
 // Функция стартует операцию чтения из сокета
 void schedule_read(DWORD idx)
 {
-	g_ctxs[idx].current_write = (g_ctxs[idx].current_write) % BUFSIZE;
 	WSABUF buf;
-	buf.buf = g_ctxs[idx].buf_recv +g_ctxs[idx].current_write;
-	if (g_ctxs[idx].sz_recv == 0)
-	{
-		g_ctxs[idx].sz_recv = BUFSIZE;
-	}
-	buf.len = g_ctxs[idx].sz_recv;
-	/*buf.len = BUFSIZE;*/
-
+	buf.buf = g_ctxs[idx].buf_recv;
+	buf.len = BUFSIZE;
 	memset(&g_ctxs[idx].overlap_recv, 0, sizeof(OVERLAPPED));
 	g_ctxs[idx].flags_recv = 0;
 	WSARecv(g_ctxs[idx].socket, &buf, 1, NULL, &g_ctxs[idx].flags_recv, &g_ctxs[idx].overlap_recv, NULL);
 }
-
 // Функция стартует операцию отправки подготовленных данных в сокет
-void schedule_write(DWORD idx)//,char *b)
+void schedule_write(DWORD idx)
 {
 	WSABUF buf;
 	buf.buf = g_ctxs[idx].buf_send + g_ctxs[idx].sz_send;
-	//buf.buf = b;
-	buf.len = g_ctxs[idx].sz_send_total - g_ctxs[idx].sz_send;//strlen(buf.buf); 
+	buf.len = g_ctxs[idx].sz_send_total - g_ctxs[idx].sz_send;
 	memset(&g_ctxs[idx].overlap_send, 0, sizeof(OVERLAPPED));
 	WSASend(g_ctxs[idx].socket, &buf, 1, NULL, 0, &g_ctxs[idx].overlap_send, NULL);
 }
+// 
 
 // Функция добавляет новое принятое подключение клиента
 void add_accepted_connection()
@@ -103,23 +112,157 @@ void schedule_accept()
 	// Принятие подключения.
 	// Как только операция будет завершена - порт завершения пришлет уведомление. // Размеры буферов должны быть на 16 байт больше размера адреса согласно документации разработчика ОС
 }
-int is_string_received(DWORD idx, int* len)
+void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 {
-	DWORD i;
-	for (i = 0; i < g_ctxs[idx].sz_recv; i++)
+	unsigned int payloadlen = 0;
+	g_ctxs[idx].buf_send[0] = cmd;
+	payloadlen++;
+	g_ctxs[idx].buf_send[1] = len << 0;
+	payloadlen++;
+	g_ctxs[idx].buf_send[2] = len << 8;
+	payloadlen++;
+	g_ctxs[idx].buf_send[3] = len << 16;
+	payloadlen++;
+	g_ctxs[idx].buf_send[4] = len << 24;
+	payloadlen++;
+	memcpy(g_ctxs[idx].buf_send + payloadlen, buf, len);
+	payloadlen = payloadlen + len;
+
+	WSABUF buffer;
+	buffer.buf = g_ctxs[idx].buf_send;
+	buffer.len = payloadlen;
+	memset(&g_ctxs[idx].overlap_send, 0, sizeof(OVERLAPPED));
+	WSASend(g_ctxs[idx].socket, &buffer, 1, NULL, 0, &g_ctxs[idx].overlap_send, NULL);
+}
+void process_recieve(DWORD idx, int* len)
+{
+	CMD cmd=(CMD)g_ctxs[idx].buf_recv[0];
+	uint32_t u0 = g_ctxs[idx].buf_recv[1], u1 = g_ctxs[idx].buf_recv[2], u2 = g_ctxs[idx].buf_recv[3], u3 = g_ctxs[idx].buf_recv[4];
+	uint32_t length = (u0&(0xff)) | (u1&(0xff)) | (u2&(0xff)) | (u3&(0xff));
+	switch (cmd)
 	{
-		if (g_ctxs[idx].buf_recv[i] == '\n')
+		case CMD_PUBKEY:
 		{
-			*len = (int)(i + 1);
-			return 1;
+			//полученная длина - длина публичного ключа клиента
+			g_ctxs[idx].ClientPublicKeyBlobLength = length;
+			//выделение памяти для блоба публичного ключа
+			if ((g_ctxs[idx].ClientPublicKeyBlob = (BYTE *)malloc(g_ctxs[idx].ClientPublicKeyBlobLength)))
+			{
+				//копирование в полученный массив
+				memcpy(g_ctxs[idx].ClientPublicKeyBlob, g_ctxs[idx].buf_recv + 5, length);
+				//импорт ключа из массива
+				if (CryptImportKey(ServerRSAProv, g_ctxs[idx].ClientPublicKeyBlob, g_ctxs[idx].ClientPublicKeyBlobLength, 0, CRYPT_EXPORTABLE, &g_ctxs[idx].ClientRSAKeys))
+				{
+					//генерация сессионного ключа для клиента
+					if (CryptGenKey(ServerRSAProv, CALG_AES_256, CRYPT_EXPORTABLE, &g_ctxs[idx].hSessionKey_AESClient))
+					{
+						//экспорт ключа в массив - получение длины
+						if (CryptExportKey(g_ctxs[idx].hSessionKey_AESClient, g_ctxs[idx].ClientRSAKeys, SIMPLEBLOB, 0, 0, &g_ctxs[idx].ClientSessionKeyBlobLength))
+						{
+							//выделение памяти для массива сессионного ключа
+							if ((g_ctxs[idx].ClientSessionKeyBlob = (BYTE *)malloc(g_ctxs[idx].ClientSessionKeyBlobLength)))
+							{
+								//экспорт сессионного ключа в g_ctxs[idx].ClientSessionKeyBlob
+								if (CryptExportKey(g_ctxs[idx].hSessionKey_AESClient, g_ctxs[idx].ClientRSAKeys, SIMPLEBLOB, 0, g_ctxs[idx].ClientSessionKeyBlob, &g_ctxs[idx].ClientSessionKeyBlobLength))
+								{
+									//отправка сессионного ключа
+									process_transmit(idx, CMD_SESSIONKEY, (CHAR*)g_ctxs[idx].ClientSessionKeyBlob, g_ctxs[idx].ClientSessionKeyBlobLength);
+									break;
+								}
+								else
+								{
+									printf("Error during CryptExportKey(). 0x%08x\n", GetLastError());
+									break;
+								}
+							}
+							else
+							{
+								printf("Out of memory. \n");
+								break;
+							}
+						}
+						else
+						{
+							printf("Error during CryptExportKey().  0x%08x\n", GetLastError());
+							break;
+						}
+					}
+					else
+					{
+						printf("Error during CryptGenKey().  0x%08x\n", GetLastError());
+						break;
+					}
+				}
+				else
+				{
+					printf("\nError during CryptImportKey(). \n");
+					break;
+				}
+			}
+			else
+			{
+				printf("Out of memory. \n");
+				break;
+			}
+			//генерация сессионного ключа
+			break;
+		}
+		case CMD_VERIFY:
+		{
+			BYTE encryptedMessage[256];
+			BYTE messageLen=length;
+			DWORD encryptedMessageLen = messageLen;
+			memcpy(encryptedMessage, g_ctxs[idx].buf_recv + 5, length);
+			for (DWORD i = 0; i < encryptedMessageLen; i++)
+			{
+				wprintf(L"%02x", encryptedMessage[i]);
+			}
+			CryptDecrypt(g_ctxs[idx].hSessionKey_AESClient, NULL, TRUE, 0, encryptedMessage, &encryptedMessageLen);
+			for (DWORD i = 0; i < encryptedMessageLen; i++)
+			{
+				wprintf(L"%02x", encryptedMessage[i]);
+			}
 		}
 	}
-	if (g_ctxs[idx].sz_recv == sizeof(g_ctxs[idx].buf_recv))
+}
+
+void genkeys()
+{
+	//инициализация
+	wchar_t info[] = L"Microsoft Enhanced RSA and AES Cryptographic Provider";
+	if (!CryptAcquireContext(&ServerRSAProv, NULL, info, PROV_RSA_AES, 0))
 	{
-		*len = sizeof(g_ctxs[idx].buf_recv);
-		return 1;
+		if (NTE_BAD_KEYSET == GetLastError())
+		{
+			if (!CryptAcquireContext(&ServerRSAProv, NULL, info, PROV_RSA_AES, CRYPT_NEWKEYSET))
+			{
+				printf("Error in AcquireContext() 0x%08x\n", GetLastError());
+			}
+		}
+		else
+		{
+			printf("Error in AcquireContext() 0x%08x\n", GetLastError());
+		}
 	}
-	return 0;
+	//генерация ключей
+	if (!CryptGenKey(ServerRSAProv, CALG_RSA_KEYX, RSA1024BIT_KEY | CRYPT_EXPORTABLE, &ServerRSAKeys))
+	{
+		printf("Error during CryptGenKey(). \n");
+	}
+	////экспорт публичного ключа в массив
+	//if (!CryptExportKey(ServerRSAKeys, 0, PUBLICKEYBLOB, 0, NULL, &ClientPublicKeyBlobLength))
+	//{
+	//	printf("Error during CryptExportKey(). \n");
+	//}
+	//if (!(ClientPublicKeyBlob = (BYTE *)malloc(ClientPublicKeyBlobLength)))
+	//{
+	//	printf("Out of memory. \n");
+	//}
+	//if (!CryptExportKey(ServerRSAKeys, NULL, PUBLICKEYBLOB, NULL, ClientPublicKeyBlob, &ClientPublicKeyBlobLength))
+	//{
+	//	printf("Error during CryptExportKey(). \n");
+	//}
+
 }
 int io_serv()
 {
@@ -169,7 +312,7 @@ int io_serv()
 		printf("CreateIoCompletionPort error: %x\n", GetLastError());
 		return 0;
 	}
-
+	genkeys();
 	g_ctxs[0].socket = s;
 
 	schedule_accept();// Старт операции принятия подключения.
@@ -187,6 +330,7 @@ int io_serv()
 
 				add_accepted_connection(); // Принятие подключения и начало принятия следующего
 				schedule_accept();
+				schedule_read(key);
 			}
 			else
 			{
@@ -203,32 +347,9 @@ int io_serv()
 						//continue;
 					}
 					g_ctxs[key].sz_recv = transferred;
-					g_ctxs[key].current_write += transferred;
-					//if (is_string_received(key, &len))
-					//{
-					//	/*cout << g_ctxs[key].sz_recv << endl;*/
-					//	//sprintf_s(g_ctxs[key].buf_send, "Test\0");
-					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-					//	//g_ctxs[key].sz_send = 0;
-					//	//schedule_write(key);
-					//	// Если строка полностью пришла, то сформировать ответ и начать его отправлять
-					//	//sprintf_s(g_ctxs[key].buf_send, "You string length: %d\0", len);
-					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-					//	//g_ctxs[key].sz_send = 0; schedule_write(key);
-
-					//	//sprintf_s(g_ctxs[key].buf_send, "You string length: 45454\0", len);
-					//	//g_ctxs[key].sz_send_total = strlen(g_ctxs[key].buf_send);
-					//	//g_ctxs[key].sz_send = 0; schedule_write(key);
-					//}
-					/*else*/
-					{
-						// Иначе - ждем данные дальше
-						/*cout << "reading" << endl;*/
-						schedule_read(key);
-						cout << g_ctxs[key].sz_recv << endl;
-						cout << g_ctxs[key].buf_recv << endl;
-
-					}
+					len = transferred;
+					schedule_read(key);
+					process_recieve(key, &len);
 				}
 				else if (&g_ctxs[key].overlap_send == lp_overlap)
 				{
@@ -260,6 +381,7 @@ int io_serv()
 }
 int main()
 {
+	int error(0);
 	io_serv();
 	return 0;
 }
