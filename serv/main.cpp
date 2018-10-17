@@ -19,7 +19,14 @@ enum CMD
 	CMD_PUBKEY = 1,
 	CMD_SESSIONKEY,
 	CMD_VERIFY,
-	CMD_TEST
+	CMD_TEST,
+	CMD_VERSION,
+	CMD_CURRENT_TIME,
+	CMD_LAUNCH_TIME,
+	CMD_MEMORY_USED,
+	CMD_MEMORY_FREE,
+	CMD_RIGHTS,
+	CMD_OWNER
 };
 struct client_ctx
 {
@@ -146,14 +153,16 @@ void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 	payloadlen++;
 	g_ctxs[idx].buf_send[4] = len << 24;
 	payloadlen++;
-	memcpy(g_ctxs[idx].buf_send + payloadlen, buf, len);
+	if (buf != NULL)
+	{
+		memcpy(g_ctxs[idx].buf_send + payloadlen, buf, len);
+	}
 	payloadlen = payloadlen + len;
 
 	//зашифровываем буфер для отправки
 	if (g_ctxs[idx].sessionkeyenum == true)
 	{
 		encrypt_buf(idx, g_ctxs[idx].buf_send, &payloadlen);
-		//decrypt_buf(idx, g_ctxs[idx].buf_send, &payloadlen);
 	}
 
 	WSABUF buffer;
@@ -264,35 +273,82 @@ void process_recieve(DWORD idx, int* len)
 		}
 	}
 }
-
+void show_menu()
+{
+	cout << "1. Choose client" << endl;
+	cout << "2. Get type and version client OS" << endl;
+	cout << "3. Get current time" << endl;
+	cout << "4. Get time from launch" << endl;
+	cout << "5. Get memory used(MB)" << endl;
+	cout << "6. Get free memory on disks" << endl;
+	cout << "7. Get object rights" << endl;
+	cout << "8. Get object owner" << endl;
+	cout << "0. Show menu" << endl;
+}
 void process_input()
 {
-	//if (getchar())
+	int action = 0;
+	int idx = 0;
+	show_menu();
+	while (1)
 	{
-	/*AGAIN:*/
-		char symb = 0;
-		//system("cls");
-		//for (int i = 0; i < current_number_of_clients; i++)
-		//{
-		//	printf(" connection %u created, remote IP: %u.%u.%u.%u\n", i, (g_ctxs[0].ip >> 24) & 0xff, (g_ctxs[0].ip >> 16) & 0xff, (g_ctxs[0].ip >> 8) & 0xff, (g_ctxs[0].ip) & 0xff);
-		//}
-		cout << "Input client number" << endl;
-
-
-		cin >> symb;
-		if (symb > current_number_of_clients)
+		cout << "Input action" << endl;
+		cin >> action;
+		switch (action)
 		{
-			//goto AGAIN;
+			case 1:
+			{
+				for (int i = 1; i <= current_number_of_clients; i++)
+				{
+					printf("Connection %u, remote IP: %u.%u.%u.%u\n", i, (g_ctxs[i].ip >> 24) & 0xff, (g_ctxs[i].ip >> 16) & 0xff, (g_ctxs[i].ip >> 8) & 0xff, (g_ctxs[i].ip) & 0xff);
+				}
+				do 
+				{
+					cout << "Input client number" << endl;
+					cin >> idx;
+				} while ((idx>MAX_CLIENTS)||(idx<1));
+				break;
+			}
+			case 2:
+			{
+				process_transmit(idx, CMD_VERSION, NULL, 0);
+				break;
+			}
+			case 3:
+			{
+				process_transmit(idx, CMD_CURRENT_TIME, NULL, 0);
+				break;
+			}
+			case 4:
+			{
+				process_transmit(idx, CMD_LAUNCH_TIME, NULL, 0);
+				break;
+			}
+			case 5:
+			{
+				process_transmit(idx, CMD_MEMORY_USED, NULL, 0);
+				break;
+			}
+			case 6:
+			{
+				process_transmit(idx, CMD_MEMORY_FREE, NULL, 0);
+				break;	
+			}
+			case 7:
+			{
+				process_transmit(idx, CMD_RIGHTS, NULL, 0);
+				break;
+			}
+			case 8:
+			{
+				process_transmit(idx, CMD_OWNER, NULL, 0);
+				break;
+			}
+			case 0:
+			{
+				show_menu();
+			}
 		}
-		cout << "1. Вывести тип и версию ОС" << endl;
-		cout << "2. Выввести текущее время" << endl;
-		cout << "3. Вывести время, прошедшее с момента запуска ОС" << endl;
-		cout << "4. Вывести информацию об используемой памяти (в мегабайтах)" << endl;
-		cout << "5. Вывести информацию о свободном месте на локальных дисках (в гигабайтах)" << endl;
-		cout << "6. Вывести права доступа к объекту" << endl;
-		cout << "7. Вывести владельца объекта" << endl;
-		cout << "0. Выход" << endl;
-		cin >> symb;
 	}
 }
 
@@ -439,7 +495,6 @@ int io_serv()
 
 	while (1) // Бесконечный цикл принятия событий о завершенных операциях
 	{
-
 		BOOL b = GetQueuedCompletionStatus(g_io_port, &transferred, &key, &lp_overlap, 10);// Ожидание событий в течение 1 секунды
 		if (b)
 		{
@@ -453,55 +508,9 @@ int io_serv()
 				schedule_read(key);
 				break;
 			}
-		//	else
-		//	{
-		//		// Иначе поступило событие по завершению операции от клиента. // Ключ key - индекс в массиве g_ctxs
-		//		if (&g_ctxs[key].overlap_recv == lp_overlap)
-		//		{
-		//			int len;
-
-		//			if (transferred == 0)// Данные приняты:
-		//			{
-
-		//			}
-		//			g_ctxs[key].sz_recv = transferred;
-		//			len = transferred;
-		//			schedule_read(key);
-		//			process_recieve(key, &len);
-		//		}
-		//		else if (&g_ctxs[key].overlap_send == lp_overlap)
-		//		{
-		//			// Данные отправлены
-
-		//			g_ctxs[key].sz_send += transferred;
-		//			if (g_ctxs[key].sz_send < g_ctxs[key].sz_send_total && transferred > 0)
-		//			{
-		//				// Если данные отправлены не полностью - продолжить отправлять
-		//				schedule_write(key);
-		//			}
-		//		}
-		//		else if (&g_ctxs[key].overlap_cancel == lp_overlap)
-		//		{
-		//			// Все коммуникации завершены, сокет может быть закрыт
-		//			closesocket(g_ctxs[key].socket);
-		//			memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
-		//			printf(" connection %u closed\n", key);
-		//		}
-		//	}
-		//}
-		//else
-		//{
-		//	// Ни одной операции не было завершено в течение заданного времени, программа может
-		//	// выполнить какие-либо другие действия
-		//	// ...
-		//	//schedule_read(key);
-		//	process_input();
 		}
 	}
-	while (1)
-	{
-		process_input();
-	}
+	process_input();
 }
 int main()
 {
