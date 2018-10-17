@@ -16,7 +16,8 @@ enum CMD
 {
 	CMD_PUBKEY = 1,
 	CMD_SESSIONKEY,
-	CMD_VERIFY
+	CMD_VERIFY,
+	CMD_TEST
 };
 struct client_ctx
 {
@@ -33,9 +34,9 @@ struct client_ctx
 	OVERLAPPED overlap_send;
 	OVERLAPPED overlap_cancel;
 	DWORD flags_recv; // Флаги для WSARecv
-
-	HCRYPTKEY ClientRSAKeys;
-	HCRYPTKEY hSessionKey_AESClient;
+	bool sessionkeyenum = false;
+	HCRYPTKEY ClientRSAKeys=NULL;
+	HCRYPTKEY hSessionKey_AESClient=NULL;
 	BYTE *ClientPublicKeyBlob = NULL;
 	DWORD ClientPublicKeyBlobLength=0;
 	BYTE *ClientSessionKeyBlob = NULL;
@@ -112,6 +113,20 @@ void schedule_accept()
 	// Принятие подключения.
 	// Как только операция будет завершена - порт завершения пришлет уведомление. // Размеры буферов должны быть на 16 байт больше размера адреса согласно документации разработчика ОС
 }
+void encrypt_buf(DWORD idx, CHAR* buf, unsigned int *len)
+{
+	DWORD length = BUFSIZE;
+	if (!CryptEncrypt(g_ctxs[idx].hSessionKey_AESClient, NULL, TRUE, 0, (BYTE*)buf, (DWORD*)len, length))
+	{
+		printf("Error during CryptEncrypt(). 0x%08x\n", GetLastError());
+	}
+}
+void decrypt_buf(DWORD idx, CHAR* buf, unsigned int *len)
+{
+	DWORD length = *len;
+	CryptDecrypt(g_ctxs[idx].hSessionKey_AESClient, NULL, TRUE, 0, (BYTE*)buf, (DWORD*)len);
+
+}
 void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 {
 	unsigned int payloadlen = 0;
@@ -128,6 +143,13 @@ void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 	memcpy(g_ctxs[idx].buf_send + payloadlen, buf, len);
 	payloadlen = payloadlen + len;
 
+	//зашифровываем буфер для отправки
+	if (g_ctxs[idx].sessionkeyenum == true)
+	{
+		encrypt_buf(idx, g_ctxs[idx].buf_send, &payloadlen);
+		//decrypt_buf(idx, g_ctxs[idx].buf_send, &payloadlen);
+	}
+
 	WSABUF buffer;
 	buffer.buf = g_ctxs[idx].buf_send;
 	buffer.len = payloadlen;
@@ -136,6 +158,12 @@ void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 }
 void process_recieve(DWORD idx, int* len)
 {
+	unsigned int tmplength = *len;
+	//расшифровываем буфер для отправки
+	if (g_ctxs[idx].sessionkeyenum == true)
+	{
+		decrypt_buf(idx,g_ctxs[idx].buf_recv, &tmplength);
+	}
 	CMD cmd=(CMD)g_ctxs[idx].buf_recv[0];
 	uint32_t u0 = g_ctxs[idx].buf_recv[1], u1 = g_ctxs[idx].buf_recv[2], u2 = g_ctxs[idx].buf_recv[3], u3 = g_ctxs[idx].buf_recv[4];
 	uint32_t length = (u0&(0xff)) | (u1&(0xff)) | (u2&(0xff)) | (u3&(0xff));
@@ -211,17 +239,21 @@ void process_recieve(DWORD idx, int* len)
 		{
 			BYTE encryptedMessage[256];
 			BYTE messageLen=length;
+			string test= "Decryption Works -- using multiple blocks";
 			DWORD encryptedMessageLen = messageLen;
 			memcpy(encryptedMessage, g_ctxs[idx].buf_recv + 5, length);
-			for (DWORD i = 0; i < encryptedMessageLen; i++)
-			{
-				wprintf(L"%02x", encryptedMessage[i]);
-			}
 			CryptDecrypt(g_ctxs[idx].hSessionKey_AESClient, NULL, TRUE, 0, encryptedMessage, &encryptedMessageLen);
-			for (DWORD i = 0; i < encryptedMessageLen; i++)
+			memset(encryptedMessage+ encryptedMessageLen,0, 256 - encryptedMessageLen);
+			string str = string((char*)encryptedMessage);
+			if (str == test)
 			{
-				wprintf(L"%02x", encryptedMessage[i]);
+				g_ctxs[idx].sessionkeyenum = true;
+				process_transmit(idx, CMD_TEST, (CHAR*)encryptedMessage, encryptedMessageLen);
 			}
+		}
+		case CMD_TEST:
+		{
+
 		}
 	}
 }
@@ -341,10 +373,7 @@ int io_serv()
 
 					if (transferred == 0)// Данные приняты:
 					{
-						//cout << "endconn" << endl;
-						//CancelIo((HANDLE)g_ctxs[key].socket);// Соединение разорвано
-						//PostQueuedCompletionStatus(g_io_port, 0, key, &g_ctxs[key].overlap_cancel);
-						//continue;
+
 					}
 					g_ctxs[key].sz_recv = transferred;
 					len = transferred;
@@ -365,7 +394,8 @@ int io_serv()
 				else if (&g_ctxs[key].overlap_cancel == lp_overlap)
 				{
 					// Все коммуникации завершены, сокет может быть закрыт
-					closesocket(g_ctxs[key].socket); memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
+					closesocket(g_ctxs[key].socket);
+					memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
 					printf(" connection %u closed\n", key);
 				}
 			}
