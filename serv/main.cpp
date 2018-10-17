@@ -10,6 +10,8 @@ using namespace std;
 #define MAX_CLIENTS (100)
 #define WIN32_LEAN_AND_MEAN
 #define BUFSIZE 2048
+int current_number_of_clients = 0;
+void hClient(LPVOID tmp);
 HCRYPTPROV ServerRSAProv;
 HCRYPTKEY ServerRSAKeys;
 enum CMD
@@ -35,6 +37,7 @@ struct client_ctx
 	OVERLAPPED overlap_cancel;
 	DWORD flags_recv; // Флаги для WSARecv
 	bool sessionkeyenum = false;
+	unsigned int ip;
 	HCRYPTKEY ClientRSAKeys=NULL;
 	HCRYPTKEY hSessionKey_AESClient=NULL;
 	BYTE *ClientPublicKeyBlob = NULL;
@@ -94,6 +97,9 @@ void add_accepted_connection()
 				printf("CreateIoCompletionPort error: %x\n", GetLastError());
 				return;
 			}
+			g_ctxs[i].ip = ip;
+			current_number_of_clients++;
+			CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)hClient, (LPVOID)&i, 0, NULL);
 			// Ожидание данных от сокета
 			schedule_read(i);
 			return;
@@ -248,6 +254,7 @@ void process_recieve(DWORD idx, int* len)
 			if (str == test)
 			{
 				g_ctxs[idx].sessionkeyenum = true;
+				//printf("enc works %u. \n",idx);
 				process_transmit(idx, CMD_TEST, (CHAR*)encryptedMessage, encryptedMessageLen);
 			}
 		}
@@ -255,6 +262,37 @@ void process_recieve(DWORD idx, int* len)
 		{
 
 		}
+	}
+}
+
+void process_input()
+{
+	//if (getchar())
+	{
+	/*AGAIN:*/
+		char symb = 0;
+		//system("cls");
+		//for (int i = 0; i < current_number_of_clients; i++)
+		//{
+		//	printf(" connection %u created, remote IP: %u.%u.%u.%u\n", i, (g_ctxs[0].ip >> 24) & 0xff, (g_ctxs[0].ip >> 16) & 0xff, (g_ctxs[0].ip >> 8) & 0xff, (g_ctxs[0].ip) & 0xff);
+		//}
+		cout << "Input client number" << endl;
+
+
+		cin >> symb;
+		if (symb > current_number_of_clients)
+		{
+			//goto AGAIN;
+		}
+		cout << "1. Вывести тип и версию ОС" << endl;
+		cout << "2. Выввести текущее время" << endl;
+		cout << "3. Вывести время, прошедшее с момента запуска ОС" << endl;
+		cout << "4. Вывести информацию об используемой памяти (в мегабайтах)" << endl;
+		cout << "5. Вывести информацию о свободном месте на локальных дисках (в гигабайтах)" << endl;
+		cout << "6. Вывести права доступа к объекту" << endl;
+		cout << "7. Вывести владельца объекта" << endl;
+		cout << "0. Выход" << endl;
+		cin >> symb;
 	}
 }
 
@@ -281,20 +319,70 @@ void genkeys()
 	{
 		printf("Error during CryptGenKey(). \n");
 	}
-	////экспорт публичного ключа в массив
-	//if (!CryptExportKey(ServerRSAKeys, 0, PUBLICKEYBLOB, 0, NULL, &ClientPublicKeyBlobLength))
-	//{
-	//	printf("Error during CryptExportKey(). \n");
-	//}
-	//if (!(ClientPublicKeyBlob = (BYTE *)malloc(ClientPublicKeyBlobLength)))
-	//{
-	//	printf("Out of memory. \n");
-	//}
-	//if (!CryptExportKey(ServerRSAKeys, NULL, PUBLICKEYBLOB, NULL, ClientPublicKeyBlob, &ClientPublicKeyBlobLength))
-	//{
-	//	printf("Error during CryptExportKey(). \n");
-	//}
+}
+void hClient(LPVOID tmp)
+{
+	key = (DWORD)tmp;
+	while (1) // Бесконечный цикл принятия событий о завершенных операциях
+	{
 
+		BOOL b = GetQueuedCompletionStatus(g_io_port, &transferred, &key, &lp_overlap, 10);// Ожидание событий в течение 1 секунды
+		if (b)
+		{
+			// Поступило уведомление о завершении операции
+			if (key == 0) // ключ 0 - для прослушивающего сокета
+			{
+				g_ctxs[0].sz_recv += transferred;
+
+				add_accepted_connection(); // Принятие подключения и начало принятия следующего
+				schedule_accept();
+				schedule_read(key);
+			}
+			else
+			{
+				// Иначе поступило событие по завершению операции от клиента. // Ключ key - индекс в массиве g_ctxs
+				if (&g_ctxs[key].overlap_recv == lp_overlap)
+				{
+					int len;
+
+					if (transferred == 0)// Данные приняты:
+					{
+
+					}
+					g_ctxs[key].sz_recv = transferred;
+					len = transferred;
+					schedule_read(key);
+					process_recieve(key, &len);
+				}
+				else if (&g_ctxs[key].overlap_send == lp_overlap)
+				{
+					// Данные отправлены
+
+					g_ctxs[key].sz_send += transferred;
+					if (g_ctxs[key].sz_send < g_ctxs[key].sz_send_total && transferred > 0)
+					{
+						// Если данные отправлены не полностью - продолжить отправлять
+						schedule_write(key);
+					}
+				}
+				else if (&g_ctxs[key].overlap_cancel == lp_overlap)
+				{
+					// Все коммуникации завершены, сокет может быть закрыт
+					closesocket(g_ctxs[key].socket);
+					memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
+					printf(" connection %u closed\n", key);
+				}
+			}
+		}
+		else
+		{
+			// Ни одной операции не было завершено в течение заданного времени, программа может
+			// выполнить какие-либо другие действия
+			// ...
+			//schedule_read(key);
+			//process_input();
+		}
+	}
 }
 int io_serv()
 {
@@ -363,50 +451,56 @@ int io_serv()
 				add_accepted_connection(); // Принятие подключения и начало принятия следующего
 				schedule_accept();
 				schedule_read(key);
+				break;
 			}
-			else
-			{
-				// Иначе поступило событие по завершению операции от клиента. // Ключ key - индекс в массиве g_ctxs
-				if (&g_ctxs[key].overlap_recv == lp_overlap)
-				{
-					int len;
+		//	else
+		//	{
+		//		// Иначе поступило событие по завершению операции от клиента. // Ключ key - индекс в массиве g_ctxs
+		//		if (&g_ctxs[key].overlap_recv == lp_overlap)
+		//		{
+		//			int len;
 
-					if (transferred == 0)// Данные приняты:
-					{
+		//			if (transferred == 0)// Данные приняты:
+		//			{
 
-					}
-					g_ctxs[key].sz_recv = transferred;
-					len = transferred;
-					schedule_read(key);
-					process_recieve(key, &len);
-				}
-				else if (&g_ctxs[key].overlap_send == lp_overlap)
-				{
-					// Данные отправлены
+		//			}
+		//			g_ctxs[key].sz_recv = transferred;
+		//			len = transferred;
+		//			schedule_read(key);
+		//			process_recieve(key, &len);
+		//		}
+		//		else if (&g_ctxs[key].overlap_send == lp_overlap)
+		//		{
+		//			// Данные отправлены
 
-					g_ctxs[key].sz_send += transferred;
-					if (g_ctxs[key].sz_send < g_ctxs[key].sz_send_total && transferred > 0)
-					{
-						// Если данные отправлены не полностью - продолжить отправлять
-						schedule_write(key);
-					}
-				}
-				else if (&g_ctxs[key].overlap_cancel == lp_overlap)
-				{
-					// Все коммуникации завершены, сокет может быть закрыт
-					closesocket(g_ctxs[key].socket);
-					memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
-					printf(" connection %u closed\n", key);
-				}
-			}
+		//			g_ctxs[key].sz_send += transferred;
+		//			if (g_ctxs[key].sz_send < g_ctxs[key].sz_send_total && transferred > 0)
+		//			{
+		//				// Если данные отправлены не полностью - продолжить отправлять
+		//				schedule_write(key);
+		//			}
+		//		}
+		//		else if (&g_ctxs[key].overlap_cancel == lp_overlap)
+		//		{
+		//			// Все коммуникации завершены, сокет может быть закрыт
+		//			closesocket(g_ctxs[key].socket);
+		//			memset(&g_ctxs[key], 0, sizeof(g_ctxs[key]));
+		//			printf(" connection %u closed\n", key);
+		//		}
+		//	}
+		//}
+		//else
+		//{
+		//	// Ни одной операции не было завершено в течение заданного времени, программа может
+		//	// выполнить какие-либо другие действия
+		//	// ...
+		//	//schedule_read(key);
+		//	process_input();
 		}
-		else
-		{
-			// Ни одной операции не было завершено в течение заданного времени, программа может
-			// выполнить какие-либо другие действия
-			// ...
-			//schedule_read(key);
-		}
+	}
+	while (1)
+	{
+		process_input();
 	}
 }
 int main()
