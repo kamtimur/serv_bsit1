@@ -24,7 +24,7 @@ enum CMD
 	CMD_CURRENT_TIME,
 	CMD_LAUNCH_TIME,
 	CMD_MEMORY_USED,
-	CMD_MEMORY_FREE,
+	CMD_DISKS,
 	CMD_RIGHTS,
 	CMD_OWNER
 };
@@ -266,10 +266,74 @@ void process_recieve(DWORD idx, int* len)
 				//printf("enc works %u. \n",idx);
 				process_transmit(idx, CMD_TEST, (CHAR*)encryptedMessage, encryptedMessageLen);
 			}
+			break;
 		}
 		case CMD_TEST:
 		{
+			break;
+		}
+		case CMD_VERSION:
+		{
+			char os[2];
+			memcpy(os, g_ctxs[idx].buf_recv + 5, length);
+			printf("The operation system is: %c   %c\n", os[0], os[1]);
+			break;
+		}
+		case CMD_CURRENT_TIME:
+		{
+			char time[15];
+			memcpy(time, g_ctxs[idx].buf_recv + 5, length);
+			printf("The current time is:%c%c.%c%c.%c%c%c%c  %c%c:%c%c:%c%c\n", time[0], time[1], time[2], time[3], time[4], time[5],time[6], time[7], time[8], time[9], time[10], time[11], time[12], time[13]);
+			break;
+		}
+		case CMD_LAUNCH_TIME:
+		{
+			char time[12];
+			memcpy(time, g_ctxs[idx].buf_recv + 5, length);
+			printf("Time from start system:%c%c:%c%c:%c%c\n", time[0], time[1], time[2], time[3], time[6], time[7]);
+			break;
+		}
+		case CMD_MEMORY_USED:
+		{
+			MEMORYSTATUS stat;
+			memcpy(&stat, g_ctxs[idx].buf_recv + 5, sizeof(stat));
+			cout << "\nStructure length in bytes:" << endl;
+			cout << stat.dwLength << endl;
 
+			cout << "Memory load in percent: " << endl;
+			cout << stat.dwMemoryLoad << endl;
+
+			cout << "Maximum amount of physical memory: " << endl;
+			cout << stat.dwTotalPhys << endl;
+
+			cout << "Free physical memory in bytes: " << endl;
+			cout << stat.dwAvailPhys << endl;
+
+			cout << "Maximum amount of memory for programs in bytes: " << endl;
+			cout << stat.dwTotalPageFile << endl;
+
+			cout << "Available amount of memory for programs in bytes: " << endl;
+			cout << stat.dwAvailPageFile << endl;
+
+
+			cout << "Maximum amount of virtual memory in bytes: " << endl;
+			cout << stat.dwTotalPhys << endl;
+
+			cout << "Free virtual memory in bytes: " << endl;
+			cout << stat.dwAvailVirtual << endl;
+			break;
+		}
+		case CMD_DISKS:
+		{
+			printf("Out of memory. \n");
+			printf("%s", g_ctxs[idx].buf_recv+5);
+			break;
+		}
+		case CMD_RIGHTS:
+		{
+			printf("Out of memory. \n");
+
+			break;
 		}
 	}
 }
@@ -292,7 +356,7 @@ void process_input()
 	show_menu();
 	while (1)
 	{
-		cout << "Input action" << endl;
+		cout << "Input action\n" << endl;
 		cin >> action;
 		switch (action)
 		{
@@ -304,7 +368,7 @@ void process_input()
 				}
 				do 
 				{
-					cout << "Input client number" << endl;
+					cout << "Input client number\n" << endl;
 					cin >> idx;
 				} while ((idx>MAX_CLIENTS)||(idx<1));
 				break;
@@ -331,7 +395,7 @@ void process_input()
 			}
 			case 6:
 			{
-				process_transmit(idx, CMD_MEMORY_FREE, NULL, 0);
+				process_transmit(idx, CMD_DISKS, NULL, 0);
 				break;	
 			}
 			case 7:
@@ -510,6 +574,7 @@ int io_serv()
 			}
 		}
 	}
+	//process_transmit(1, CMD_DISKS, NULL, 0);
 	process_input();
 }
 int main()
