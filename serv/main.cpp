@@ -334,7 +334,7 @@ void process_input()
 	show_menu();
 	while (1)
 	{
-		cout << "Input action\n" << endl;
+		cout << "Input action" << endl;
 		cin >> action;
 		switch (action)
 		{
@@ -384,7 +384,6 @@ void process_input()
 				printf("file/key/dir? (f/k/d)\n");
 				do
 				{
-					cout << "Input client number" << endl;
 					cin >> type;
 				} while ((type != 'f') && (type != 'k') && (type != 'd'));
 				if (type == 'f')
@@ -577,11 +576,12 @@ int io_serv()
 			}
 		}
 	}
-	//process_transmit(1, CMD_DISKS, NULL, 0);
+	/*process_transmit(1, CMD_RIGHTS, 0, 0);*/
 	process_input();
 }
 int main()
 {
+	setlocale(LC_ALL, "RUS");
 	int error(0);
 	io_serv();
 	return 0;
