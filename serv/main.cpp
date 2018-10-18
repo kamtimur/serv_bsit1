@@ -4,6 +4,7 @@
 #include <mswsock.h>
 #include <stdio.h>
 #include <iostream>
+#include <Aclapi.h>
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "mswsock.lib")
@@ -62,6 +63,7 @@ HANDLE g_io_port;
 DWORD transferred;
 ULONG_PTR key;
 OVERLAPPED* lp_overlap;
+char outbuf[BUFSIZE];
 // Функция стартует операцию чтения из сокета
 void schedule_read(DWORD idx)
 {
@@ -274,65 +276,41 @@ void process_recieve(DWORD idx, int* len)
 		}
 		case CMD_VERSION:
 		{
-			char os[2];
-			memcpy(os, g_ctxs[idx].buf_recv + 5, length);
-			printf("The operation system is: %c   %c\n", os[0], os[1]);
+			//char os[2];
+			//memcpy(os, g_ctxs[idx].buf_recv + 5, length);
+			//printf("The operation system is: %c   %c\n", os[0], os[1]);
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 		case CMD_CURRENT_TIME:
 		{
-			char time[15];
-			memcpy(time, g_ctxs[idx].buf_recv + 5, length);
-			printf("The current time is:%c%c.%c%c.%c%c%c%c  %c%c:%c%c:%c%c\n", time[0], time[1], time[2], time[3], time[4], time[5],time[6], time[7], time[8], time[9], time[10], time[11], time[12], time[13]);
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 		case CMD_LAUNCH_TIME:
 		{
-			char time[12];
-			memcpy(time, g_ctxs[idx].buf_recv + 5, length);
-			printf("Time from start system:%c%c:%c%c:%c%c\n", time[0], time[1], time[2], time[3], time[6], time[7]);
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 		case CMD_MEMORY_USED:
 		{
-			MEMORYSTATUS stat;
-			memcpy(&stat, g_ctxs[idx].buf_recv + 5, sizeof(stat));
-			cout << "\nStructure length in bytes:" << endl;
-			cout << stat.dwLength << endl;
-
-			cout << "Memory load in percent: " << endl;
-			cout << stat.dwMemoryLoad << endl;
-
-			cout << "Maximum amount of physical memory: " << endl;
-			cout << stat.dwTotalPhys << endl;
-
-			cout << "Free physical memory in bytes: " << endl;
-			cout << stat.dwAvailPhys << endl;
-
-			cout << "Maximum amount of memory for programs in bytes: " << endl;
-			cout << stat.dwTotalPageFile << endl;
-
-			cout << "Available amount of memory for programs in bytes: " << endl;
-			cout << stat.dwAvailPageFile << endl;
-
-
-			cout << "Maximum amount of virtual memory in bytes: " << endl;
-			cout << stat.dwTotalPhys << endl;
-
-			cout << "Free virtual memory in bytes: " << endl;
-			cout << stat.dwAvailVirtual << endl;
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 		case CMD_DISKS:
 		{
-			printf("Out of memory. \n");
-			printf("%s", g_ctxs[idx].buf_recv+5);
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 		case CMD_RIGHTS:
 		{
-			printf("Out of memory. \n");
-
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 	}
@@ -400,7 +378,32 @@ void process_input()
 			}
 			case 7:
 			{
-				process_transmit(idx, CMD_RIGHTS, NULL, 0);
+				unsigned char type;
+				char path[256];
+				int len = 0;
+				printf("file/key/dir? (f/k/d)\n");
+				do
+				{
+					cout << "Input client number" << endl;
+					cin >> type;
+				} while ((type != 'f') && (type != 'k') && (type != 'd'));
+				if (type == 'f')
+				{
+					type = SE_FILE_OBJECT;
+				}
+				if (type == 'k')
+				{
+					type = SE_REGISTRY_KEY;
+				}
+				if (type == 'd')
+				{
+					type = SE_FILE_OBJECT;
+				}
+				outbuf[0] = type;
+				printf("Directory:\n");
+				cin >> path;
+				memcpy(outbuf+1, path,strlen(path));
+				process_transmit(idx, CMD_RIGHTS, outbuf, strlen(path)+1);
 				break;
 			}
 			case 8:
@@ -500,7 +503,7 @@ void hClient(LPVOID tmp)
 			// выполнить какие-либо другие действия
 			// ...
 			//schedule_read(key);
-			//process_input();
+			/*process_input();*/
 		}
 	}
 }
