@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <iostream>
 #include <Aclapi.h>
+
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "mswsock.lib")
@@ -28,6 +29,10 @@ enum CMD
 	CMD_DISKS,
 	CMD_RIGHTS,
 	CMD_OWNER
+};
+union converter {
+	char    c[4];
+	int32_t i;
 };
 struct client_ctx
 {
@@ -173,7 +178,7 @@ void process_transmit(DWORD idx, CMD cmd, CHAR* buf, unsigned int len)
 	memset(&g_ctxs[idx].overlap_send, 0, sizeof(OVERLAPPED));
 	WSASend(g_ctxs[idx].socket, &buffer, 1, NULL, 0, &g_ctxs[idx].overlap_send, NULL);
 }
-void process_recieve(DWORD idx, int* len)
+void process_recieve(DWORD idx, unsigned int* len)
 {
 	unsigned int tmplength = *len;
 	//расшифровываем буфер для отправки
@@ -182,8 +187,13 @@ void process_recieve(DWORD idx, int* len)
 		decrypt_buf(idx,g_ctxs[idx].buf_recv, &tmplength);
 	}
 	CMD cmd=(CMD)g_ctxs[idx].buf_recv[0];
-	uint32_t u0 = g_ctxs[idx].buf_recv[1], u1 = g_ctxs[idx].buf_recv[2], u2 = g_ctxs[idx].buf_recv[3], u3 = g_ctxs[idx].buf_recv[4];
-	uint32_t length = (u0&(0xff)) | (u1&(0xff)) | (u2&(0xff)) | (u3&(0xff));
+	union converter conv;
+
+	conv.c[0] = g_ctxs[idx].buf_recv[1];
+	conv.c[1] = g_ctxs[idx].buf_recv[2];
+	conv.c[2] = g_ctxs[idx].buf_recv[3];
+	conv.c[3] = g_ctxs[idx].buf_recv[4];
+	int length = conv.i;
 	switch (cmd)
 	{
 		case CMD_PUBKEY:
@@ -311,7 +321,7 @@ void process_recieve(DWORD idx, int* len)
 		{
 			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
 			printf("%s", g_ctxs[idx].buf_recv + 5);
-			printf("\n");
+			/*printf("\n");*/
 			break;
 		}
 		case CMD_OWNER:
@@ -440,7 +450,7 @@ void process_input()
 				cin >> path;
 				memcpy(outbuf + 1, path, strlen(path));
 				process_transmit(idx, CMD_OWNER, outbuf, strlen(path) + 1);
-				goto A;;
+				goto A;
 			}
 			case 0:
 			{
@@ -498,7 +508,7 @@ void hClient(LPVOID tmp)
 				// Иначе поступило событие по завершению операции от клиента. // Ключ key - индекс в массиве g_ctxs
 				if (&g_ctxs[key].overlap_recv == lp_overlap)
 				{
-					int len;
+					unsigned int len;
 
 					if (transferred == 0)// Данные приняты:
 					{
