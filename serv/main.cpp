@@ -311,6 +311,13 @@ void process_recieve(DWORD idx, int* len)
 		{
 			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
 			printf("%s", g_ctxs[idx].buf_recv + 5);
+			printf("\n");
+			break;
+		}
+		case CMD_OWNER:
+		{
+			*(g_ctxs[idx].buf_recv + length + 5) = '\0';
+			printf("%s", g_ctxs[idx].buf_recv + 5);
 			break;
 		}
 	}
@@ -334,7 +341,8 @@ void process_input()
 	show_menu();
 	while (1)
 	{
-		cout << "Input action" << endl;
+		A:
+		/*cout << "Input action" << endl;*/
 		cin >> action;
 		switch (action)
 		{
@@ -349,32 +357,32 @@ void process_input()
 					cout << "Input client number\n" << endl;
 					cin >> idx;
 				} while ((idx>MAX_CLIENTS)||(idx<1));
-				break;
+				goto A;
 			}
 			case 2:
 			{
 				process_transmit(idx, CMD_VERSION, NULL, 0);
-				break;
+				goto A;;
 			}
 			case 3:
 			{
 				process_transmit(idx, CMD_CURRENT_TIME, NULL, 0);
-				break;
+				goto A;;
 			}
 			case 4:
 			{
 				process_transmit(idx, CMD_LAUNCH_TIME, NULL, 0);
-				break;
+				goto A;;
 			}
 			case 5:
 			{
 				process_transmit(idx, CMD_MEMORY_USED, NULL, 0);
-				break;
+				goto A;;
 			}
 			case 6:
 			{
 				process_transmit(idx, CMD_DISKS, NULL, 0);
-				break;	
+				goto A;;
 			}
 			case 7:
 			{
@@ -403,16 +411,41 @@ void process_input()
 				cin >> path;
 				memcpy(outbuf+1, path,strlen(path));
 				process_transmit(idx, CMD_RIGHTS, outbuf, strlen(path)+1);
-				break;
+				goto A;;
 			}
 			case 8:
 			{
-				process_transmit(idx, CMD_OWNER, NULL, 0);
-				break;
+				unsigned char type;
+				char path[256];
+				int len = 0;
+				printf("file/key/dir? (f/k/d)\n");
+				do
+				{
+					cin >> type;
+				} while ((type != 'f') && (type != 'k') && (type != 'd'));
+				if (type == 'f')
+				{
+					type = SE_FILE_OBJECT;
+				}
+				if (type == 'k')
+				{
+					type = SE_REGISTRY_KEY;
+				}
+				if (type == 'd')
+				{
+					type = SE_FILE_OBJECT;
+				}
+				outbuf[0] = type;
+				printf("Directory:\n");
+				cin >> path;
+				memcpy(outbuf + 1, path, strlen(path));
+				process_transmit(idx, CMD_OWNER, outbuf, strlen(path) + 1);
+				goto A;;
 			}
 			case 0:
 			{
 				show_menu();
+				goto A;
 			}
 		}
 	}
@@ -537,7 +570,10 @@ int io_serv()
 	memset(g_ctxs, 0, sizeof(g_ctxs));// Обнуление структуры данных для хранения входящих соединений
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(9000);
+	printf("input port:\n");
+	u_short port;
+	cin >> port;
+	addr.sin_port = htons(port);
 
 	if (bind(s, (struct sockaddr*) &addr, sizeof(addr)) < 0 || listen(s, 1) < 0)
 	{
